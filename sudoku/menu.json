@@ -1,0 +1,12 @@
+{
+  "items": [
+    {
+      "name": "Sudoku",
+      "priority": 10,
+      "action": "bin/launch.sh",
+      "exitmenu": true,
+      "refresh": false,
+      "status": false
+    }
+  ]
+}

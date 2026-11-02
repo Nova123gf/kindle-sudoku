@@ -1,0 +1,588 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0">
+<meta name="HandheldFriendly" content="true">
+<title>Sudoku</title>
+<style id="dyn"></style>
+<style>
+html, body { margin:0; padding:0; background:#fff; color:#000; overflow:hidden; height:100%;
+  font-family: Georgia, "Times New Roman", serif; -webkit-user-select:none; user-select:none;
+  -webkit-tap-highlight-color: rgba(0,0,0,0); }
+#app { position:absolute; left:0; top:0; width:100%; height:100%; text-align:center; }
+.screen { display:none; }
+.btn { display:inline-block; background:#fff; color:#000; border:2px solid #000; cursor:pointer;
+  font-family: Georgia, "Times New Roman", serif; box-sizing:border-box; text-align:center; padding:0; margin:0; }
+.btn.on { background:#000; color:#fff; }
+.btn.dim { color:#aaa; border-color:#aaa; }
+
+/* ---------- menu ---------- */
+#menu .title { font-weight:bold; letter-spacing:2px; }
+#menu .row { display:block; margin-left:auto; margin-right:auto; text-align:left; }
+#menu .row .nm { font-weight:bold; }
+#menu .row .st { float:right; }
+#menu .stats { color:#000; }
+#menu .small { cursor:pointer; border:0; text-decoration:underline; background:none; }
+
+/* ---------- game ---------- */
+#top { margin-left:auto; margin-right:auto; text-align:left; position:relative; }
+#top .btn { float:left; }
+#top .info { position:absolute; left:0; right:0; top:0; text-align:center; pointer-events:none; }
+#top .mist { position:absolute; right:0; top:0; }
+#board { margin-left:auto; margin-right:auto; border-collapse:collapse; border:3px solid #000; table-layout:fixed; }
+#board td { border:1px solid #888; padding:0; margin:0; position:relative; text-align:center; vertical-align:middle;
+  overflow:hidden; box-sizing:border-box; cursor:pointer; }
+#board td.br { border-right:3px solid #000; }
+#board td.bb { border-bottom:3px solid #000; }
+#board td.peer { background:#ececec; }
+#board td.same { background:#cfcfcf; }
+#board td.sel  { background:#a8a8a8; }
+#board td.given .v { font-weight:bold; color:#000; }
+#board td.good .v { color:#000; font-weight:normal; }
+#board td.bad  { background:#444 !important; }
+#board td.bad .v { color:#fff; }
+#board td.rev .v { color:#777; font-style:italic; }
+.v { position:absolute; left:0; top:0; width:100%; text-align:center; }
+.nt { position:absolute; left:0; top:0; width:100%; height:100%; }
+.nt i { float:left; width:33.33%; height:33.33%; font-style:normal; text-align:center; overflow:hidden; color:#000; }
+#pad { margin-left:auto; margin-right:auto; text-align:left; font-size:0; }
+#pad .btn { float:left; }
+#pad2 { margin-left:auto; margin-right:auto; text-align:left; }
+#pad2 .btn { float:left; }
+.clr { clear:both; height:0; line-height:0; font-size:0; }
+
+/* ---------- overlay ---------- */
+#ov { display:none; position:absolute; left:0; top:0; width:100%; height:100%; background:rgba(255,255,255,0.7); z-index:50; }
+#ovbox { background:#fff; border:3px solid #000; margin-left:auto; margin-right:auto; text-align:center; }
+#ovbox h2 { margin:0; }
+#ovbox p { margin:0; }
+#gen { display:none; position:absolute; left:0; top:0; width:100%; height:100%; background:#fff; z-index:60; text-align:center; }
+</style>
+</head>
+<body>
+<div id="app">
+
+  <!-- MENU -->
+  <div id="menu" class="screen">
+    <div class="title" id="mTitle">SUDOKU</div>
+    <div id="mCont"></div>
+    <div id="mDiffs"></div>
+    <div class="stats" id="mStats"></div>
+    <div id="mReset"></div>
+  </div>
+
+  <!-- GAME -->
+  <div id="game" class="screen">
+    <div id="top">
+      <div class="btn" id="bMenu">Menu</div>
+      <div class="info" id="info"></div>
+      <div class="mist" id="mist"></div>
+    </div>
+    <table id="board"></table>
+    <div id="pad"></div>
+    <div id="pad2">
+      <div class="btn" id="bNotes">Notes</div>
+      <div class="btn" id="bErase">Erase</div>
+      <div class="btn" id="bNew">New</div>
+    </div>
+  </div>
+
+  <div id="ov"><div id="ovbox"><h2 id="ovT"></h2><p id="ovM"></p><div id="ovB"></div></div></div>
+  <div id="gen"><div id="genT">Generating...</div></div>
+</div>
+
+<script>
+/* =====================================================================
+   Sudoku for Kindle PW3 - ES5 only (old WebKit), no dependencies.
+   Part 1: puzzle engine (unique-solution generator, incremental)
+   Part 2: game + UI
+   ===================================================================== */
+(function () {
+"use strict";
+
+/* ---------- Part 1: engine ---------- */
+var POP = [], i0;
+for (i0 = 0; i0 < 512; i0++) { var c0 = 0, x0 = i0; while (x0) { c0 += x0 & 1; x0 >>= 1; } POP[i0] = c0; }
+
+function shuffle(a) {
+  var i, j, t;
+  for (i = a.length - 1; i > 0; i--) { j = Math.floor(Math.random() * (i + 1)); t = a[i]; a[i] = a[j]; a[j] = t; }
+  return a;
+}
+
+/* Counts solutions of grid g (array of 81 ints, 0 = empty) up to `limit`.
+   If rnd is true, candidate order is randomised. Returns {n, sol}. */
+function search(g0, limit, rnd) {
+  var g = g0.slice(), R = [0,0,0,0,0,0,0,0,0], C = R.slice(), B = R.slice();
+  var i, r, c, b, bit;
+  for (i = 0; i < 81; i++) {
+    if (g[i]) {
+      r = (i / 9) | 0; c = i % 9; b = ((r / 3) | 0) * 3 + ((c / 3) | 0); bit = 1 << (g[i] - 1);
+      if ((R[r] | C[c] | B[b]) & bit) { return { n: 0, sol: null }; }
+      R[r] |= bit; C[c] |= bit; B[b] |= bit;
+    }
+  }
+  var n = 0, sol = null;
+  function rec() {
+    var bi = -1, bm = 0, best = 10, k, m, cnt, rr, cc, bb, bit;
+    for (k = 0; k < 81; k++) {
+      if (!g[k]) {
+        rr = (k / 9) | 0; cc = k % 9; bb = ((rr / 3) | 0) * 3 + ((cc / 3) | 0);
+        m = (~(R[rr] | C[cc] | B[bb])) & 511; cnt = POP[m];
+        if (cnt === 0) { return; }
+        if (cnt < best) { best = cnt; bi = k; bm = m; if (cnt === 1) { break; } }
+      }
+    }
+    if (bi < 0) { n++; if (!sol) { sol = g.slice(); } return; }
+    var list = [], d;
+    for (d = 0; d < 9; d++) { if (bm & (1 << d)) { list.push(d); } }
+    if (rnd) { shuffle(list); }
+    rr = (bi / 9) | 0; cc = bi % 9; bb = ((rr / 3) | 0) * 3 + ((cc / 3) | 0);
+    var q;
+    for (q = 0; q < list.length; q++) {
+      d = list[q]; bit = 1 << d;
+      g[bi] = d + 1; R[rr] |= bit; C[cc] |= bit; B[bb] |= bit;
+      rec();
+      g[bi] = 0; R[rr] &= ~bit; C[cc] &= ~bit; B[bb] &= ~bit;
+      if (n >= limit) { return; }
+    }
+  }
+  rec();
+  return { n: n, sol: sol };
+}
+
+var CLUES = { easy: 40, medium: 34, hard: 30, expert: 26 };
+var TIME_BUDGET = 4000;   /* ms: stop digging holes after this, accept what we have */
+var SLICE = 120;          /* ms of work per slice, then yield to the browser */
+
+/* Incremental generator: calls done(puzzleArray, solutionArray) when finished. */
+function generate(diff, done) {
+  var empty = [], i;
+  for (i = 0; i < 81; i++) { empty.push(0); }
+  var full = search(empty, 1, true).sol;
+  var puzzle = full.slice();
+  var order = []; for (i = 0; i < 81; i++) { order.push(i); } shuffle(order);
+  var target = CLUES[diff] || 40, clues = 81, pos = 0, t0 = Date.now();
+
+  function step() {
+    var ts = Date.now();
+    while (pos < 81 && clues > target) {
+      var idx = order[pos++], keep = puzzle[idx];
+      puzzle[idx] = 0;
+      if (search(puzzle, 2, false).n !== 1) { puzzle[idx] = keep; } else { clues--; }
+      if (Date.now() - t0 > TIME_BUDGET) { pos = 81; break; }
+      if (Date.now() - ts > SLICE) { setTimeout(step, 10); return; }
+    }
+    done(puzzle, full);
+  }
+  setTimeout(step, 10);
+}
+
+/* expose for testing in node */
+var engine = { search: search, generate: generate, CLUES: CLUES };
+if (typeof window !== "undefined") { window.SudokuEngine = engine; }
+
+/* ---------- Part 2: game ---------- */
+if (typeof document === "undefined") { return; }
+
+var DIFFS = ["easy", "medium", "hard", "expert"];
+var LABEL = { easy: "Easy", medium: "Medium", hard: "Hard", expert: "Expert" };
+var KEY_STATS = "ksudoku_stats_v1", KEY_SAVE = "ksudoku_save_v1";
+
+function $(id) { return document.getElementById(id); }
+
+/* ---- storage with fallback ---- */
+var memStore = {};
+function sget(k) { try { var v = window.localStorage.getItem(k); if (v !== null) { return v; } } catch (e) {} return memStore.hasOwnProperty(k) ? memStore[k] : null; }
+function sset(k, v) { memStore[k] = v; try { window.localStorage.setItem(k, v); } catch (e) {} }
+function sdel(k) { delete memStore[k]; try { window.localStorage.removeItem(k); } catch (e) {} }
+
+function emptyStats() {
+  var s = { solved: {}, best: {}, lost: 0, streak: 0, bestStreak: 0 }, d;
+  for (d = 0; d < DIFFS.length; d++) { s.solved[DIFFS[d]] = 0; s.best[DIFFS[d]] = 0; }
+  return s;
+}
+function loadStats() {
+  var raw = sget(KEY_STATS), s = emptyStats();
+  if (raw) {
+    try {
+      var o = JSON.parse(raw), d;
+      for (d = 0; d < DIFFS.length; d++) {
+        s.solved[DIFFS[d]] = (o.solved && o.solved[DIFFS[d]]) | 0;
+        s.best[DIFFS[d]] = (o.best && o.best[DIFFS[d]]) | 0;
+      }
+      s.lost = o.lost | 0; s.streak = o.streak | 0; s.bestStreak = o.bestStreak | 0;
+    } catch (e) {}
+  }
+  return s;
+}
+function saveStats() { sset(KEY_STATS, JSON.stringify(stats)); }
+var stats = loadStats();
+
+function fmtTime(ms) {
+  var s = Math.round(ms / 1000), m = (s / 60) | 0; s = s % 60;
+  return m + ":" + (s < 10 ? "0" : "") + s;
+}
+
+/* ---- state ---- */
+var G = null;          /* current game or null */
+var selIdx = -1;
+var notesMode = false;
+var MAX_MISTAKES = 3;
+var cellEls = [], cache = [];
+var layout = { cell: 40 };
+var screen = "menu";
+var armedReset = false;
+
+function peersOf(a, b) {
+  var ra = (a / 9) | 0, ca = a % 9, rb = (b / 9) | 0, cb = b % 9;
+  return ra === rb || ca === cb || (((ra / 3) | 0) === ((rb / 3) | 0) && ((ca / 3) | 0) === ((cb / 3) | 0));
+}
+
+function newGameFrom(diff, puzzle, sol) {
+  var val = [], given = [], notes = [], i;
+  for (i = 0; i < 81; i++) { val.push(puzzle[i]); given.push(puzzle[i] ? 1 : 0); notes.push(0); }
+  G = { diff: diff, sol: sol, val: val, given: given, notes: notes, mistakes: 0, elapsed: 0, t0: Date.now(), over: false, shown: false };
+  selIdx = -1; notesMode = false;
+}
+
+function saveGame() {
+  if (!G || G.over) { return; }
+  var el = G.elapsed + (screen === "game" ? Date.now() - G.t0 : 0);
+  sset(KEY_SAVE, JSON.stringify({ d: G.diff, s: G.sol.join(""), v: G.val.join(""), g: G.given.join(""), n: G.notes, m: G.mistakes, e: el }));
+}
+function loadGame() {
+  var raw = sget(KEY_SAVE);
+  if (!raw) { return null; }
+  try {
+    var o = JSON.parse(raw), i, sol = [], val = [], given = [];
+    if (o.s.length !== 81 || o.v.length !== 81 || o.g.length !== 81) { return null; }
+    for (i = 0; i < 81; i++) { sol.push(+o.s.charAt(i)); val.push(+o.v.charAt(i)); given.push(+o.g.charAt(i)); }
+    return { diff: o.d, sol: sol, val: val, given: given, notes: o.n, mistakes: o.m | 0, elapsed: o.e | 0, t0: Date.now(), over: false, shown: false };
+  } catch (e) { return null; }
+}
+function hasSave() { return !!loadGame(); }
+
+/* ---- layout ---- */
+function computeLayout() {
+  var W = window.innerWidth || document.documentElement.clientWidth || 600;
+  var H = window.innerHeight || document.documentElement.clientHeight || 800;
+  var cell = Math.floor(Math.min((W - 10) / 9, H / 13.1));
+  if (cell > 74) { cell = 74; }
+  if (cell < 20) { cell = 20; }
+  layout.cell = cell; layout.W = W; layout.H = H;
+  var c = cell, bw = c * 9 + 6;
+  var css = "";
+  css += "#top{width:" + bw + "px;height:" + Math.round(c * 0.95) + "px;margin-top:" + Math.round(c * 0.25) + "px;margin-bottom:" + Math.round(c * 0.2) + "px;}";
+  css += "#top .btn{height:" + Math.round(c * 0.85) + "px;line-height:" + Math.round(c * 0.85 - 4) + "px;width:" + Math.round(c * 2.2) + "px;font-size:" + Math.round(c * 0.42) + "px;}";
+  css += "#top .info{font-size:" + Math.round(c * 0.4) + "px;line-height:" + Math.round(c * 0.85) + "px;}";
+  css += "#top .mist{font-size:" + Math.round(c * 0.4) + "px;line-height:" + Math.round(c * 0.85) + "px;}";
+  css += "#board{width:" + bw + "px;height:" + bw + "px;}";
+  css += "#board td{width:" + c + "px;height:" + c + "px;}";
+  css += ".v{font-size:" + Math.round(c * 0.62) + "px;line-height:" + c + "px;}";
+  css += ".nt i{font-size:" + Math.max(8, Math.round(c * 0.26)) + "px;line-height:" + Math.round(c / 3) + "px;}";
+  css += "#pad{width:" + bw + "px;margin-top:" + Math.round(c * 0.3) + "px;}";
+  css += "#pad .btn{width:" + c + "px;height:" + Math.round(c * 1.05) + "px;line-height:" + Math.round(c * 1.05 - 4) + "px;font-size:" + Math.round(c * 0.6) + "px;}";
+  css += "#pad2{width:" + bw + "px;margin-top:" + Math.round(c * 0.2) + "px;}";
+  css += "#pad2 .btn{width:" + Math.round((bw - 2 * c * 0.15) / 3) + "px;margin-right:" + Math.round(c * 0.15) + "px;height:" + Math.round(c * 0.85) + "px;line-height:" + Math.round(c * 0.85 - 4) + "px;font-size:" + Math.round(c * 0.42) + "px;}";
+  css += "#pad2 .btn:last-child{margin-right:0;}";
+  /* menu sizing */
+  var mw = Math.min(W - 24, 640), f = Math.max(14, Math.min(Math.round(W / 22), 34));
+  css += "#menu{padding-top:" + Math.round(H * 0.05) + "px;}";
+  css += "#menu .title{font-size:" + Math.round(f * 2.2) + "px;margin-bottom:" + Math.round(f * 0.6) + "px;}";
+  css += "#menu .row{width:" + mw + "px;margin-top:" + Math.round(f * 0.6) + "px;height:" + Math.round(f * 2.4) + "px;line-height:" + Math.round(f * 2.4 - 4) + "px;font-size:" + f + "px;padding:0 " + Math.round(f * 0.7) + "px;}";
+  css += "#menu .stats{margin-top:" + Math.round(f * 0.9) + "px;font-size:" + Math.round(f * 0.85) + "px;line-height:" + Math.round(f * 1.4) + "px;}";
+  css += "#menu .small{font-size:" + Math.round(f * 0.75) + "px;margin-top:" + Math.round(f * 0.6) + "px;padding:" + Math.round(f * 0.3) + "px;}";
+  /* overlay + generating */
+  var ow = Math.min(W - 30, 560), of = Math.max(14, Math.round(f * 0.95));
+  css += "#ovbox{width:" + ow + "px;margin-top:" + Math.round(H * 0.25) + "px;padding:" + Math.round(of) + "px;box-sizing:border-box;}";
+  css += "#ovbox h2{font-size:" + Math.round(of * 1.9) + "px;margin-bottom:" + Math.round(of * 0.5) + "px;}";
+  css += "#ovbox p{font-size:" + of + "px;margin-bottom:" + Math.round(of * 0.7) + "px;line-height:" + Math.round(of * 1.4) + "px;}";
+  css += "#ovbox .btn{width:" + Math.round(ow * 0.8) + "px;height:" + Math.round(of * 2.4) + "px;line-height:" + Math.round(of * 2.4 - 4) + "px;font-size:" + of + "px;margin:" + Math.round(of * 0.3) + "px;}";
+  css += "#genT{margin-top:" + Math.round(H * 0.4) + "px;font-size:" + Math.round(f * 1.2) + "px;}";
+  $("dyn").innerHTML = css;
+}
+
+/* ---- board build ---- */
+function buildBoard() {
+  var t = $("board"), html = "", r, c;
+  for (r = 0; r < 9; r++) {
+    html += "<tr>";
+    for (c = 0; c < 9; c++) {
+      html += '<td data-i="' + (r * 9 + c) + '" class="' + ((c === 2 || c === 5) ? "br " : "") + ((r === 2 || r === 5) ? "bb" : "") + '"></td>';
+    }
+    html += "</tr>";
+  }
+  t.innerHTML = html;
+  var tds = t.getElementsByTagName("td"), i;
+  cellEls = []; cache = [];
+  for (i = 0; i < 81; i++) { cellEls.push(tds[i]); cache.push(null); }
+  var pad = "", d;
+  for (d = 1; d <= 9; d++) { pad += '<div class="btn" data-d="' + d + '" id="pd' + d + '">' + d + "</div>"; }
+  $("pad").innerHTML = pad + '<div class="clr"></div>';
+}
+
+/* ---- render ---- */
+function countDigit(d) {
+  var n = 0, i;
+  for (i = 0; i < 81; i++) { if (G.val[i] === d && G.val[i] === G.sol[i]) { n++; } }
+  return n;
+}
+
+function render() {
+  if (!G) { return; }
+  var i, sv = selIdx >= 0 ? G.val[selIdx] : 0;
+  for (i = 0; i < 81; i++) {
+    var v = G.val[i], cls = [], html = "";
+    var isGood = v && v === G.sol[i];
+    if (G.given[i]) { cls.push("given"); } else if (isGood) { cls.push("good"); }
+    if (v && !isGood && !G.given[i]) { cls.push(G.over ? "rev" : "bad"); }
+    if (G.over && !G.given[i] && G.revealed && G.revealed[i]) { cls.push("rev"); }
+    if (i === selIdx) { cls.push("sel"); }
+    else if (sv && v === sv && isGood) { cls.push("same"); }
+    else if (selIdx >= 0 && peersOf(i, selIdx)) { cls.push("peer"); }
+
+    if (v) {
+      html = '<div class="v">' + v + "</div>";
+    } else if (G.notes[i]) {
+      html = '<div class="nt">';
+      var d;
+      for (d = 1; d <= 9; d++) { html += "<i>" + ((G.notes[i] & (1 << (d - 1))) ? d : "&nbsp;") + "</i>"; }
+      html += "</div>";
+    }
+    var key = cls.join(" ") + "|" + html;
+    if (cache[i] !== key) {
+      cache[i] = key;
+      var base = cellEls[i].className.match(/\b(br|bb)\b/g);
+      cellEls[i].className = (base ? base.join(" ") + " " : "") + cls.join(" ");
+      cellEls[i].innerHTML = html;
+    }
+  }
+  /* pad */
+  var dd;
+  for (dd = 1; dd <= 9; dd++) {
+    var el = $("pd" + dd), full = countDigit(dd) >= 9;
+    el.className = "btn" + (full ? " dim" : "");
+  }
+  $("bNotes").className = "btn" + (notesMode ? " on" : "");
+  $("bNotes").innerHTML = notesMode ? "Notes: ON" : "Notes";
+  $("info").innerHTML = LABEL[G.diff];
+  $("mist").innerHTML = "Mistakes " + G.mistakes + "/" + MAX_MISTAKES;
+}
+
+/* ---- gameplay ---- */
+function removeFromPeerNotes(idx, d) {
+  var i, bit = 1 << (d - 1);
+  for (i = 0; i < 81; i++) { if (G.notes[i] && peersOf(i, idx)) { G.notes[i] &= ~bit; } }
+}
+
+function elapsedNow() { return G.elapsed + (Date.now() - G.t0); }
+
+function checkWin() {
+  var i;
+  for (i = 0; i < 81; i++) { if (G.val[i] !== G.sol[i]) { return; } }
+  G.over = true; G.shown = true;
+  var ms = elapsedNow();
+  stats.solved[G.diff]++; stats.streak++;
+  if (stats.streak > stats.bestStreak) { stats.bestStreak = stats.streak; }
+  var newBest = (!stats.best[G.diff] || ms < stats.best[G.diff]);
+  if (newBest) { stats.best[G.diff] = ms; }
+  saveStats(); sdel(KEY_SAVE);
+  render();
+  showOverlay("Solved!", "Time " + fmtTime(ms) + (newBest ? " (new best)" : "") + "<br>Mistakes: " + G.mistakes +
+    "<br>" + LABEL[G.diff] + " solved: " + stats.solved[G.diff], [
+    ["Next " + LABEL[G.diff] + " puzzle", function () { startNew(G.diff); }],
+    ["Menu", function () { showMenu(); }]
+  ]);
+}
+
+function gameOver() {
+  G.over = true; G.shown = true; G.revealed = [];
+  var i;
+  for (i = 0; i < 81; i++) { if (G.val[i] !== G.sol[i]) { G.revealed[i] = 1; G.val[i] = G.sol[i]; } }
+  stats.lost++; stats.streak = 0;
+  saveStats(); sdel(KEY_SAVE);
+  render();
+  showOverlay("Game over", "3 mistakes. The solution is filled in (grey italics).", [
+    ["New " + LABEL[G.diff] + " puzzle", function () { startNew(G.diff); }],
+    ["Menu", function () { showMenu(); }]
+  ]);
+}
+
+function place(d) {
+  if (!G || G.over || selIdx < 0) { return; }
+  var i = selIdx;
+  if (G.given[i]) { return; }
+  var cur = G.val[i];
+  if (cur && cur === G.sol[i]) { return; }          /* locked correct */
+  if (notesMode) {
+    if (cur) { return; }                             /* erase wrong digit first */
+    G.notes[i] ^= (1 << (d - 1));
+  } else {
+    if (countDigit(d) >= 9) { return; }
+    if (cur === d) { return; }
+    if (d === G.sol[i]) {
+      G.val[i] = d; G.notes[i] = 0;
+      removeFromPeerNotes(i, d);
+    } else {
+      G.val[i] = d; G.notes[i] = 0; G.mistakes++;
+    }
+  }
+  saveGame();
+  if (G.mistakes >= MAX_MISTAKES) { gameOver(); return; }
+  render();
+  if (!notesMode) { checkWin(); }
+}
+
+function erase() {
+  if (!G || G.over || selIdx < 0) { return; }
+  var i = selIdx;
+  if (G.given[i]) { return; }
+  if (G.val[i] && G.val[i] === G.sol[i]) { return; }
+  G.val[i] = 0; G.notes[i] = 0;
+  saveGame(); render();
+}
+
+function select(i) {
+  if (!G || G.over) { return; }
+  selIdx = i;
+  render();
+}
+
+/* ---- overlay ---- */
+function showOverlay(title, msg, buttons) {
+  $("ovT").innerHTML = title; $("ovM").innerHTML = msg;
+  var box = $("ovB"), k;
+  box.innerHTML = "";
+  for (k = 0; k < buttons.length; k++) {
+    (function (b) {
+      var e = document.createElement("div");
+      e.className = "btn"; e.innerHTML = b[0];
+      e.onclick = function () { $("ov").style.display = "none"; b[1](); };
+      box.appendChild(e);
+    })(buttons[k]);
+  }
+  $("ov").style.display = "block";
+}
+
+/* ---- screens ---- */
+function setScreen(name) {
+  screen = name;
+  $("menu").style.display = name === "menu" ? "block" : "none";
+  $("game").style.display = name === "game" ? "block" : "none";
+}
+
+function startNew(diff) {
+  $("ov").style.display = "none";
+  if (G && !G.over && screen === "game") { /* abandoning an unfinished game */ }
+  sdel(KEY_SAVE);
+  $("gen").style.display = "block";
+  $("genT").innerHTML = "Generating " + LABEL[diff] + " puzzle...";
+  generate(diff, function (puzzle, sol) {
+    newGameFrom(diff, puzzle, sol);
+    cache = []; var i; for (i = 0; i < 81; i++) { cache.push(null); }
+    $("gen").style.display = "none";
+    setScreen("game");
+    render();
+    saveGame();
+  });
+}
+
+function continueGame() {
+  var g = loadGame();
+  if (!g) { return; }
+  G = g; selIdx = -1; notesMode = false;
+  cache = []; var i; for (i = 0; i < 81; i++) { cache.push(null); }
+  G.t0 = Date.now();
+  setScreen("game"); render();
+}
+
+function showMenu() {
+  if (G && !G.over && screen === "game") {
+    G.elapsed += Date.now() - G.t0;
+    saveGame();
+  }
+  $("ov").style.display = "none";
+  armedReset = false;
+  setScreen("menu");
+  renderMenu();
+}
+
+function renderMenu() {
+  var h = "", d, sv = loadGame(), total = 0;
+  $("mCont").innerHTML = sv
+    ? '<div class="btn row on" id="bCont"><span class="nm">Continue</span><span class="st">' + LABEL[sv.diff] + ", " + sv.mistakes + " mistakes</span></div>"
+    : "";
+  for (d = 0; d < DIFFS.length; d++) {
+    var k = DIFFS[d]; total += stats.solved[k];
+    h += '<div class="btn row" data-diff="' + k + '"><span class="nm">' + LABEL[k] + '</span><span class="st">solved ' + stats.solved[k] +
+      (stats.best[k] ? " &middot; best " + fmtTime(stats.best[k]) : "") + "</span></div>";
+  }
+  $("mDiffs").innerHTML = h;
+  $("mStats").innerHTML = "Total solved: " + total + "<br>Win streak: " + stats.streak + " (best " + stats.bestStreak + ")<br>Games lost: " + stats.lost;
+  $("mReset").innerHTML = '<span class="btn small" id="bReset">' + (armedReset ? "Tap again to erase all stats" : "Reset stats") + "</span>";
+  var c = $("bCont"); if (c) { c.onclick = continueGame; }
+  var rows = $("mDiffs").getElementsByTagName("div"), q;
+  for (q = 0; q < rows.length; q++) {
+    (function (el) { el.onclick = function () { startNew(el.getAttribute("data-diff")); }; })(rows[q]);
+  }
+  $("bReset").onclick = function () {
+    if (!armedReset) { armedReset = true; renderMenu(); return; }
+    stats = emptyStats(); saveStats(); armedReset = false; renderMenu();
+  };
+}
+
+/* ---- events ---- */
+function bind() {
+  $("board").onclick = function (e) {
+    var t = e.target || e.srcElement;
+    while (t && t.tagName !== "TD") { t = t.parentNode; }
+    if (t && t.getAttribute) { select(+t.getAttribute("data-i")); }
+  };
+  $("pad").onclick = function (e) {
+    var t = e.target || e.srcElement;
+    if (t && t.getAttribute && t.getAttribute("data-d")) { place(+t.getAttribute("data-d")); }
+  };
+  $("bNotes").onclick = function () { notesMode = !notesMode; render(); };
+  $("bErase").onclick = erase;
+  $("bMenu").onclick = showMenu;
+  $("bNew").onclick = function () { if (G) { startNew(G.diff); } };
+  document.onkeydown = function (e) {
+    if (screen !== "game" || !G || G.over) { return; }
+    var k = e.keyCode || e.which, r, c;
+    if (k >= 49 && k <= 57) { place(k - 48); }
+    else if (k >= 97 && k <= 105) { place(k - 96); }
+    else if (k === 8 || k === 46) { erase(); }
+    else if (k === 78) { notesMode = !notesMode; render(); }
+    else if (k >= 37 && k <= 40) {
+      if (selIdx < 0) { selIdx = 40; }
+      r = (selIdx / 9) | 0; c = selIdx % 9;
+      if (k === 37 && c > 0) { c--; } if (k === 39 && c < 8) { c++; }
+      if (k === 38 && r > 0) { r--; } if (k === 40 && r < 8) { r++; }
+      selIdx = r * 9 + c; render();
+      if (e.preventDefault) { e.preventDefault(); }
+    }
+  };
+  var rt = null;
+  window.onresize = function () {
+    if (rt) { clearTimeout(rt); }
+    rt = setTimeout(function () { computeLayout(); if (G && screen === "game") { render(); } }, 150);
+  };
+  window.onblur = function () { if (G && !G.over && screen === "game") { saveGame(); } };
+}
+
+/* ---- init ---- */
+function init() {
+  computeLayout();
+  buildBoard();
+  bind();
+  showMenu();
+}
+window.SudokuApp = { init: init };
+if (document.readyState === "loading") { document.addEventListener("DOMContentLoaded", init); } else { init(); }
+
+})();
+</script>
+</body>
+</html>
